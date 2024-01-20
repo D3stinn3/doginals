@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const dogecore = require('bitcore-lib-doge')
+const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios')
 const fs = require('fs')
 const dotenv = require('dotenv')
@@ -205,7 +206,6 @@ async function broadcastAll(txs, retry) {
         console.log(`broadcasting tx ${i + 1} of ${txs.length}`)
 
         try {
-            throw new Error('hello')
             await broadcast(txs[i], retry)
         } catch (e) {
             console.log('broadcast failed', e)
@@ -475,6 +475,7 @@ function chunkToNumber(chunk) {
 
 
 async function extract(txid) {
+    console.log(txid)
     let resp = await axios.get(`https://dogechain.info/api/v1/transaction/${txid}`)
     let transaction = resp.data.transaction
     let script = Script.fromHex(transaction.inputs[0].scriptSig.hex)
@@ -516,6 +517,60 @@ async function extract(txid) {
     }
 }
 
+// Function to validate Dogecoin address
+function isValidAddress(address) {
+    try {
+        bitcoin.address.toOutputScript(address, bitcoin.networks.dogecoin);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Function to broadcast transaction
+async function broadcastTransaction(transactionHex) {
+    try {
+        const response = await axios.post(process.env.NODE_RPC_URL, {
+            jsonrpc: "1.0",
+            id: "doginals",
+            method: "sendrawtransaction",
+            params: [transactionHex]
+        }, {
+            auth: {
+                username: process.env.NODE_RPC_USER,
+                password: process.env.NODE_RPC_PASS
+            }
+        });
+
+        return response.data.result;
+    } catch (error) {
+        if (error.response) {
+            console.error('Error broadcasting transaction:', error.response.data.error.message);
+        } else {
+            console.error('Error:', error.message);
+        }
+        throw error;
+    }
+}
+
+// Example usage
+async function mintDoginal(address, data) {
+    if (!isValidAddress(address)) {
+        console.error('Invalid Dogecoin address:', address);
+        return;
+    }
+
+    // Transaction creation logic here...
+    // For example:
+    let transactionHex = createTransactionHex(address, data); // createTransactionHex is a hypothetical function
+
+    try {
+        const txid = await broadcastTransaction(transactionHex);
+        console.log('Transaction broadcasted successfully. TXID:', txid);
+    } catch (error) {
+        console.error('Failed to broadcast transaction. Error:', error.message);
+    }
+}
 
 function server() {
     const app = express()
