@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const dogecore = require('bitcore-lib-doge')
-const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios')
 const fs = require('fs')
 const dotenv = require('dotenv')
@@ -51,7 +50,7 @@ async function wallet() {
     let subcmd = process.argv[3]
 
     if (subcmd == 'new') {
-        walletNew()
+        await walletNew()
     } else if (subcmd == 'sync') {
         await walletSync()
     } else if (subcmd == 'balance') {
@@ -66,13 +65,19 @@ async function wallet() {
 }
 
 
-function walletNew() {
-    if (!fs.existsSync(WALLET_PATH)) {
+async function walletNew() {
+    let wallet_path = WALLET_PATH
+    if (process.argv.length == 5) {
+        wallet_path =  "." + process.argv[4] + ".json"
+    }
+    console.log(`begin to create wallet ${wallet_path}`)
+
+    if (!fs.existsSync(wallet_path)) {
         const privateKey = new PrivateKey()
         const privkey = privateKey.toWIF()
         const address = privateKey.toAddress().toString()
         const json = { privkey, address, utxos: [] }
-        fs.writeFileSync(WALLET_PATH, JSON.stringify(json, 0, 2))
+        fs.writeFileSync(wallet_path, JSON.stringify(json, 0, 2))
         console.log('address', address)
     } else {
         throw new Error('wallet already exists')
@@ -101,7 +106,7 @@ async function walletSync() {
 
     let balance = wallet.utxos.reduce((acc, curr) => acc + curr.satoshis, 0)
 
-    console.log('balance', balance)
+    console.log(`${wallet.address} balance`, balance)
 }
 
 
@@ -148,12 +153,19 @@ async function walletSplit() {
     let wallet = JSON.parse(fs.readFileSync(WALLET_PATH))
 
     let balance = wallet.utxos.reduce((acc, curr) => acc + curr.satoshis, 0)
-    if (balance == 0) throw new Error('no funds to split')
+    if (balance == 0) throw new Error(`${wallet.address} no funds to split`)
+
+    let pervalue = Math.floor(balance / splits)
+    if (process.argv.length == 6) {
+        pervalue = parseInt(process.argv[5])
+    }
+
+    if (balance < splits * pervalue) throw new Error(`${wallet.address} no enough to split, ${balance} < ${splits} * ${pervalue}`)
 
     let tx = new Transaction()
     tx.from(wallet.utxos)
     for (let i = 0; i < splits - 1; i++) {
-        tx.to(wallet.address, Math.floor(balance / splits))
+        tx.to(wallet.address, pervalue)
     }
     tx.change(wallet.address)
     tx.sign(wallet.privkey)
@@ -216,7 +228,11 @@ async function broadcastAll(txs, retry) {
         }
     }
 
-    fs.deleteFileSync('pending-txs.json')
+    fs.exists('pending-txs.json', (exists) => {
+      if(exists) {
+        fs.unlinkSync('pending-txs.json')
+      }
+    });
 
     console.log('inscription txid:', txs[1].hash)
 }
@@ -374,6 +390,7 @@ function inscribe(wallet, address, contentType, data) {
     tx.inputs[0].setScript(unlock)
 
     updateWallet(wallet, tx)
+    console.log(`inscription 调用前 tx._fee${tx._fee}`)
     txs.push(tx)
 
 
@@ -434,6 +451,8 @@ async function broadcast(tx, retry) {
         params: [tx.toString()]
     }
 
+    console.log(`broadcast 调用前 tx._fee${tx._fee}`)
+
     const options = {
         auth: {
             username: process.env.NODE_RPC_USER,
@@ -475,7 +494,6 @@ function chunkToNumber(chunk) {
 
 
 async function extract(txid) {
-    console.log(txid)
     let resp = await axios.get(`https://dogechain.info/api/v1/transaction/${txid}`)
     let transaction = resp.data.transaction
     let script = Script.fromHex(transaction.inputs[0].scriptSig.hex)
@@ -517,60 +535,6 @@ async function extract(txid) {
     }
 }
 
-// Function to validate Dogecoin address
-function isValidAddress(address) {
-    try {
-        bitcoin.address.toOutputScript(address, bitcoin.networks.dogecoin);
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
-
-// Function to broadcast transaction
-async function broadcastTransaction(transactionHex) {
-    try {
-        const response = await axios.post(process.env.NODE_RPC_URL, {
-            jsonrpc: "1.0",
-            id: "doginals",
-            method: "sendrawtransaction",
-            params: [transactionHex]
-        }, {
-            auth: {
-                username: process.env.NODE_RPC_USER,
-                password: process.env.NODE_RPC_PASS
-            }
-        });
-
-        return response.data.result;
-    } catch (error) {
-        if (error.response) {
-            console.error('Error broadcasting transaction:', error.response.data.error.message);
-        } else {
-            console.error('Error:', error.message);
-        }
-        throw error;
-    }
-}
-
-// Example usage
-async function mintDoginal(address, data) {
-    if (!isValidAddress(address)) {
-        console.error('Invalid Dogecoin address:', address);
-        return;
-    }
-
-    // Transaction creation logic here...
-    // For example:
-    let transactionHex = createTransactionHex(address, data); // createTransactionHex is a hypothetical function
-
-    try {
-        const txid = await broadcastTransaction(transactionHex);
-        console.log('Transaction broadcasted successfully. TXID:', txid);
-    } catch (error) {
-        console.error('Failed to broadcast transaction. Error:', error.message);
-    }
-}
 
 function server() {
     const app = express()
